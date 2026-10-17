@@ -28,6 +28,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static uploads
+app.use('/api/uploads', express.static(path.join(process.cwd(), env.UPLOAD_DIR)));
 app.use('/uploads', express.static(path.join(process.cwd(), env.UPLOAD_DIR)));
 
 // Health check endpoint
