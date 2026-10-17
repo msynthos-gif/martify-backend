@@ -36,6 +36,115 @@ import { StatusBadge } from '../components/common/Badge';
 import { formatPrice, getProductImageUrl, getMediaUrl, parseDocumentUrls } from '../utils/formatters';
 import { WhatsAppChat } from '../components/chat/WhatsAppChat';
 
+const DEFAULT_COLORS = ['Black', 'White', 'Navy', 'Red', 'Green', 'Blue', 'Beige', 'Grey'];
+const DEFAULT_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
+
+const isFashionCategory = (cat?: Category | null, allCats: Category[] = []): boolean => {
+  if (!cat) return false;
+
+  // 1. Traverse up parent hierarchy (up to 5 levels) to detect fashion/apparel root or intermediate
+  let current: Category | undefined = cat;
+  let depth = 0;
+  while (current && depth < 5) {
+    const s = (current.slug || '').toLowerCase();
+    const n = (current.name || '').toLowerCase();
+    if (
+      s === 'fashion-apparel' ||
+      s.includes('fashion') ||
+      s.includes('apparel') ||
+      n.includes('fashion') ||
+      n.includes('apparel')
+    ) {
+      return true;
+    }
+    if (current.parent) {
+      const ps = (current.parent.slug || '').toLowerCase();
+      const pn = (current.parent.name || '').toLowerCase();
+      if (
+        ps === 'fashion-apparel' ||
+        ps.includes('fashion') ||
+        ps.includes('apparel') ||
+        pn.includes('fashion') ||
+        pn.includes('apparel')
+      ) {
+        return true;
+      }
+    }
+    if (!current.parentId) break;
+    current = allCats.find((c) => c.id === current?.parentId);
+    depth++;
+  }
+
+  // 2. Common fashion sub-category names or slugs
+  const fashionKeywords = [
+    'men', 'mens', "men's", 'women', 'womens', "women's", 'kid', 'kids', 'boy', 'boys', 'girl', 'girls', 'baby',
+    'clothing', 'cloth', 'streetwear', 'shirt', 'shirts', 't-shirt', 'tshirt', 't-shirts', 'tee', 'tees',
+    'hoodie', 'hoodies', 'jacket', 'jackets', 'outerwear', 'coat', 'coats',
+    'pant', 'pants', 'trouser', 'trousers', 'jean', 'jeans', 'denim',
+    'dress', 'dresses', 'skirt', 'skirts', 'sweater', 'sweaters', 'cardigan',
+    'shoe', 'shoes', 'footwear', 'sneaker', 'sneakers', 'boots', 'sandals',
+    'activewear', 'sportswear', 'suit', 'suits', 'kurta', 'shalwar', 'top', 'tops', 'bottom', 'bottoms',
+    'accessory', 'accessories'
+  ];
+
+  const catSlug = (cat.slug || '').toLowerCase();
+  const catName = (cat.name || '').toLowerCase();
+  const tokens = `${catName} ${catSlug}`.split(/[\s\-_/&,.'"]+/).filter(Boolean);
+  if (tokens.some((token) => fashionKeywords.includes(token))) {
+    return true;
+  }
+
+  return false;
+};
+
+const isSportsCategory = (cat?: Category | null, allCats: Category[] = []): boolean => {
+  if (!cat) return false;
+  let current: Category | undefined = cat;
+  let depth = 0;
+  while (current && depth < 5) {
+    const s = (current.slug || '').toLowerCase();
+    const n = (current.name || '').toLowerCase();
+    if (s.includes('sport') || n.includes('sport')) {
+      return true;
+    }
+    if (current.parent) {
+      const ps = (current.parent.slug || '').toLowerCase();
+      const pn = (current.parent.name || '').toLowerCase();
+      if (ps.includes('sport') || pn.includes('sport')) {
+        return true;
+      }
+    }
+    if (!current.parentId) break;
+    current = allCats.find((c) => c.id === current?.parentId);
+    depth++;
+  }
+  return false;
+};
+
+const isBeautyCategory = (cat?: Category | null, allCats: Category[] = []): boolean => {
+  if (!cat) return false;
+  let current: Category | undefined = cat;
+  let depth = 0;
+  while (current && depth < 5) {
+    const s = (current.slug || '').toLowerCase();
+    const n = (current.name || '').toLowerCase();
+    if (s.includes('beauty') || n.includes('beauty')) {
+      return true;
+    }
+    if (current.parent) {
+      const ps = (current.parent.slug || '').toLowerCase();
+      const pn = (current.parent.name || '').toLowerCase();
+      if (ps.includes('beauty') || pn.includes('beauty')) {
+        return true;
+      }
+    }
+    if (!current.parentId) break;
+    current = allCats.find((c) => c.id === current?.parentId);
+    depth++;
+  }
+  return false;
+};
+
 export const SellerDashboardPage: React.FC = () => {
   const { user: authUser, isAuthenticated, role, logout, updateUser } = useAuth();
   const navigate = useNavigate();
@@ -98,6 +207,12 @@ export const SellerDashboardPage: React.FC = () => {
   const [formGeneralError, setFormGeneralError] = useState<string | null>(null);
   const [uploadingProductImages, setUploadingProductImages] = useState(false);
   const productImagesInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Custom Color and Size Variant Options State
+  const [customColors, setCustomColors] = useState<string[]>([]);
+  const [customColorInput, setCustomColorInput] = useState('');
+  const [customSizes, setCustomSizes] = useState<string[]>([]);
+  const [customSizeInput, setCustomSizeInput] = useState('');
 
   // Document verification re-upload state
   const [kycFiles, setKycFiles] = useState<File[]>([]);
@@ -297,6 +412,10 @@ export const SellerDashboardPage: React.FC = () => {
     setEditingProduct(null);
     setFormGeneralError(null);
     setFormErrors({});
+    setCustomColors([]);
+    setCustomColorInput('');
+    setCustomSizes([]);
+    setCustomSizeInput('');
     setProductForm({
       title: '',
       description: '',
@@ -372,6 +491,18 @@ export const SellerDashboardPage: React.FC = () => {
     const existingImages = (p.images && p.images.length > 0)
       ? p.images.map((img) => img.url)
       : (p.imageUrl ? [p.imageUrl] : []);
+    const productAttrs = (p.attributes as Record<string, string[]>) || {};
+
+    const existingColors = productAttrs['color'] || [];
+    const extraColors = existingColors.filter((c: string) => !DEFAULT_COLORS.includes(c));
+    setCustomColors(extraColors);
+    setCustomColorInput('');
+
+    const existingSizes = productAttrs['size'] || [];
+    const extraSizes = existingSizes.filter((s: string) => !DEFAULT_SIZES.includes(s));
+    setCustomSizes(extraSizes);
+    setCustomSizeInput('');
+
     setProductForm({
       title: p.title,
       description: p.description,
@@ -380,11 +511,105 @@ export const SellerDashboardPage: React.FC = () => {
       categoryId: p.categoryId,
       clonedFromProductId: p.clonedFromProductId || null,
       images: existingImages,
-      attributes: (p.attributes as Record<string, string[]>) || {},
+      attributes: productAttrs,
       manualSoldCount: String(p.manualSoldCount ?? 0),
       isActive: p.isActive,
     });
     setShowAddProduct(true);
+  };
+
+  // Custom Color and Size Badge Addition/Removal Handlers
+  const handleAddCustomColor = (e?: React.MouseEvent | React.KeyboardEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const trimmed = customColorInput.trim();
+    if (!trimmed) return;
+
+    const formatted = trimmed
+      .split(' ')
+      .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ''))
+      .join(' ')
+      .trim();
+
+    if (!formatted) return;
+
+    if (!customColors.includes(formatted) && !DEFAULT_COLORS.includes(formatted)) {
+      setCustomColors((prev) => [...prev, formatted]);
+    }
+
+    const currentColors = productForm.attributes['color'] || [];
+    if (!currentColors.includes(formatted)) {
+      setProductForm((prev) => ({
+        ...prev,
+        attributes: {
+          ...prev.attributes,
+          color: [...currentColors, formatted],
+        },
+      }));
+    }
+
+    setCustomColorInput('');
+  };
+
+  const handleRemoveCustomColor = (colorToRemove: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCustomColors((prev) => prev.filter((c) => c !== colorToRemove));
+    setProductForm((prev) => {
+      const currentColors = prev.attributes['color'] || [];
+      return {
+        ...prev,
+        attributes: {
+          ...prev.attributes,
+          color: currentColors.filter((c) => c !== colorToRemove),
+        },
+      };
+    });
+  };
+
+  const handleAddCustomSize = (e?: React.MouseEvent | React.KeyboardEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const trimmed = customSizeInput.trim();
+    if (!trimmed) return;
+    const formatted = trimmed.toUpperCase();
+
+    if (!customSizes.includes(formatted) && !DEFAULT_SIZES.includes(formatted)) {
+      setCustomSizes((prev) => [...prev, formatted]);
+    }
+
+    const currentSizes = productForm.attributes['size'] || [];
+    if (!currentSizes.includes(formatted)) {
+      setProductForm((prev) => ({
+        ...prev,
+        attributes: {
+          ...prev.attributes,
+          size: [...currentSizes, formatted],
+        },
+      }));
+    }
+
+    setCustomSizeInput('');
+  };
+
+  const handleRemoveCustomSize = (sizeToRemove: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCustomSizes((prev) => prev.filter((s) => s !== sizeToRemove));
+    setProductForm((prev) => {
+      const currentSizes = prev.attributes['size'] || [];
+      return {
+        ...prev,
+        attributes: {
+          ...prev.attributes,
+          size: currentSizes.filter((s) => s !== sizeToRemove),
+        },
+      };
+    });
   };
 
   // Toggle selection of catalog product
@@ -463,27 +688,28 @@ export const SellerDashboardPage: React.FC = () => {
       const finalTitle = productForm.title.trim();
       const finalDescription = productForm.description.trim();
       const selectedCat = categories.find((c) => c.id === (productForm.categoryId || categories[0]?.id));
-      const catSlug = selectedCat?.slug || '';
-      const catName = selectedCat?.name || '';
-      const isFashion = catSlug === 'fashion-apparel' || catName.includes('Fashion');
-      const isSports = catSlug === 'sports-outdoors' || catName.includes('Sports');
-      const isBeauty = catSlug === 'beauty-personal-care' || catName.includes('Beauty');
+      const isFashion = isFashionCategory(selectedCat, categories);
+      const isSports = isSportsCategory(selectedCat, categories);
+      const isBeauty = isBeautyCategory(selectedCat, categories);
 
       const finalAttributes: Record<string, string[]> = {};
-      if (isFashion) {
+      if (isFashion || isSports) {
         if (productForm.attributes['size']?.length) {
           finalAttributes['size'] = productForm.attributes['size'];
         }
         if (productForm.attributes['color']?.length) {
           finalAttributes['color'] = productForm.attributes['color'];
         }
-      } else if (isSports) {
-        if (productForm.attributes['size']?.length) {
-          finalAttributes['size'] = productForm.attributes['size'];
-        }
       } else if (isBeauty) {
         if (productForm.attributes['volume']?.length) {
           finalAttributes['volume'] = productForm.attributes['volume'];
+        }
+      } else {
+        if (productForm.attributes['size']?.length) {
+          finalAttributes['size'] = productForm.attributes['size'];
+        }
+        if (productForm.attributes['color']?.length) {
+          finalAttributes['color'] = productForm.attributes['color'];
         }
       }
       const attributesPayload = Object.keys(finalAttributes).length > 0 ? finalAttributes : undefined;
@@ -1269,11 +1495,15 @@ export const SellerDashboardPage: React.FC = () => {
                     formErrors.categoryId ? 'border-rose-400 focus:border-rose-500 bg-rose-50/20' : 'border-slate-300 focus:border-navy-900'
                   }`}
                 >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
+                  {categories.map((c) => {
+                    const parent = c.parent || (c.parentId ? categories.find((p) => p.id === c.parentId) : null);
+                    const displayName = parent ? `${parent.name} › ${c.name}` : c.name;
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {displayName}
+                      </option>
+                    );
+                  })}
                 </select>
                 {formErrors.categoryId && (
                   <p className="text-[11px] text-rose-600 font-medium mt-1">{formErrors.categoryId}</p>
@@ -1283,44 +1513,57 @@ export const SellerDashboardPage: React.FC = () => {
               {/* Category-Based Attribute Checkboxes (Size / Color / Volume) */}
               {(() => {
                 const selectedCat = categories.find((c) => c.id === (productForm.categoryId || categories[0]?.id));
-                const catSlug = selectedCat?.slug || '';
-                const catName = selectedCat?.name || '';
-                const isFashion = catSlug === 'fashion-apparel' || catName.includes('Fashion');
-                const isSports = catSlug === 'sports-outdoors' || catName.includes('Sports');
-                const isBeauty = catSlug === 'beauty-personal-care' || catName.includes('Beauty');
+                const isFashion = isFashionCategory(selectedCat, categories);
+                const isSports = isSportsCategory(selectedCat, categories);
+                const isBeauty = isBeautyCategory(selectedCat, categories);
 
                 if (!isFashion && !isSports && !isBeauty) return null;
 
-                const attributeSections: Array<{ key: string; label: string; options: string[] }> = [];
+                const attributeSections: Array<{
+                  key: string;
+                  label: string;
+                  defaultOptions: string[];
+                  customOptions: string[];
+                }> = [];
 
                 if (isFashion) {
                   attributeSections.push({
                     key: 'size',
                     label: 'Available Sizes',
-                    options: ['S', 'M', 'L', 'XL', 'XXL'],
+                    defaultOptions: DEFAULT_SIZES,
+                    customOptions: customSizes,
                   });
                   attributeSections.push({
                     key: 'color',
                     label: 'Available Colors',
-                    options: ['Black', 'White', 'Navy', 'Red', 'Green', 'Blue'],
+                    defaultOptions: DEFAULT_COLORS,
+                    customOptions: customColors,
                   });
                 } else if (isSports) {
                   attributeSections.push({
                     key: 'size',
                     label: 'Available Sizes',
-                    options: ['S', 'M', 'L', 'XL'],
+                    defaultOptions: ['S', 'M', 'L', 'XL'],
+                    customOptions: customSizes,
+                  });
+                  attributeSections.push({
+                    key: 'color',
+                    label: 'Available Colors',
+                    defaultOptions: DEFAULT_COLORS,
+                    customOptions: customColors,
                   });
                 } else if (isBeauty) {
                   attributeSections.push({
                     key: 'volume',
                     label: 'Available Volumes',
-                    options: ['50ml', '100ml', '200ml', '500ml'],
+                    defaultOptions: ['50ml', '100ml', '200ml', '500ml'],
+                    customOptions: [],
                   });
                 }
 
                 return (
                   <div className="space-y-3">
-                    {attributeSections.map(({ key: attrKey, label: attrLabel, options }) => {
+                    {attributeSections.map(({ key: attrKey, label: attrLabel, defaultOptions, customOptions }) => {
                       const currentSelected = productForm.attributes[attrKey] || [];
                       const toggleOption = (opt: string) => {
                         const updated = currentSelected.includes(opt)
@@ -1342,37 +1585,127 @@ export const SellerDashboardPage: React.FC = () => {
                               <span>{attrLabel}</span>
                               <span className="text-[10px] font-normal text-slate-500">(Informational)</span>
                             </label>
-                            <span className="text-[10px] text-slate-400">
+                            <span className="text-[10px] text-slate-400 font-medium">
                               {currentSelected.length} selected
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-500">
-                            Check which options apply to this product. Purely cosmetic labels for the buyer—no separate stock or pricing.
+                            Check options that apply to this product, or add custom badges below.
                           </p>
+
+                          {/* Default Predefined Options */}
                           <div className="flex flex-wrap gap-2 pt-1">
-                            {options.map((opt) => {
+                            {defaultOptions.map((opt) => {
                               const isChecked = currentSelected.includes(opt);
                               return (
-                                <label
+                                <button
                                   key={opt}
-                                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer transition-all select-none ${
+                                  type="button"
+                                  onClick={() => toggleOption(opt)}
+                                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer transition-all select-none ${
                                     isChecked
                                       ? 'bg-navy-900 text-white border-navy-900 shadow-xs'
                                       : 'bg-white text-slate-700 border-slate-300 hover:border-slate-400 hover:bg-slate-50'
                                   }`}
                                 >
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onChange={() => toggleOption(opt)}
-                                    className="rounded border-slate-300 text-navy-900 focus:ring-0 focus:ring-offset-0 sr-only"
-                                  />
                                   <span>{opt}</span>
                                   {isChecked && <Check className="w-3.5 h-3.5 text-accent-orange" />}
-                                </label>
+                                </button>
+                              );
+                            })}
+
+                            {/* Dynamically Added Custom Option Badges with Remove (X) Button */}
+                            {customOptions.map((opt) => {
+                              const isChecked = currentSelected.includes(opt);
+                              return (
+                                <div
+                                  key={opt}
+                                  onClick={() => toggleOption(opt)}
+                                  className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border text-xs font-bold cursor-pointer transition-all select-none ${
+                                    isChecked
+                                      ? 'bg-navy-900 text-white border-navy-900 shadow-xs ring-1 ring-navy-900'
+                                      : 'bg-white text-slate-700 border-slate-300 hover:border-slate-400 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <span>{opt}</span>
+                                  {isChecked && <Check className="w-3.5 h-3.5 text-accent-orange" />}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      if (attrKey === 'color') handleRemoveCustomColor(opt, e);
+                                      if (attrKey === 'size') handleRemoveCustomSize(opt, e);
+                                    }}
+                                    title={`Remove ${opt}`}
+                                    className={`p-0.5 rounded-full transition-colors ml-0.5 cursor-pointer ${
+                                      isChecked
+                                        ? 'text-slate-300 hover:text-white hover:bg-white/20'
+                                        : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                                    }`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
                               );
                             })}
                           </div>
+
+                          {/* Custom Color Input Field & Add Button */}
+                          {attrKey === 'color' && (
+                            <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80">
+                              <input
+                                type="text"
+                                value={customColorInput}
+                                onChange={(e) => setCustomColorInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleAddCustomColor(e);
+                                  }
+                                }}
+                                placeholder="Type custom color (e.g. Navy Blue, Olive Green, Maroon)..."
+                                className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:border-navy-900 placeholder:text-slate-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleAddCustomColor}
+                                disabled={!customColorInput.trim()}
+                                className="px-3 py-1.5 bg-navy-900 text-white text-xs font-bold rounded-md hover:bg-navy-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Add Color</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Custom Size Input Field & Add Button */}
+                          {attrKey === 'size' && (
+                            <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80">
+                              <input
+                                type="text"
+                                value={customSizeInput}
+                                onChange={(e) => setCustomSizeInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleAddCustomSize(e);
+                                  }
+                                }}
+                                placeholder="Type custom size (e.g. 3XL, 32, Free Size)..."
+                                className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:border-navy-900 placeholder:text-slate-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleAddCustomSize}
+                                disabled={!customSizeInput.trim()}
+                                className="px-3 py-1.5 bg-navy-900 text-white text-xs font-bold rounded-md hover:bg-navy-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Add Size</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}

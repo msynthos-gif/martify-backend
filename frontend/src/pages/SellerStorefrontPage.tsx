@@ -172,9 +172,6 @@ export const SellerStorefrontPage: React.FC = () => {
             <h2 className="text-sm font-bold uppercase tracking-wider text-[#0F172A]">
               {isOfficialStore ? 'OFFICIAL STORE CATALOG' : 'STOREFRONT PRODUCTS'}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Showing {sortedProducts.length} active {sortedProducts.length === 1 ? 'item' : 'items'}
-            </p>
           </div>
 
           {/* Sort Controls */}

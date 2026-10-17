@@ -87,7 +87,7 @@ export const HomePage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const prodsData = await publicApi.getProducts();
+      const prodsData = await publicApi.getProducts(undefined, undefined, 60);
       setProducts(prodsData);
     } catch (err: any) {
       setError(err?.friendlyMessage || 'Failed to load marketplace content.');
@@ -100,13 +100,17 @@ export const HomePage: React.FC = () => {
     loadData();
   }, []);
 
-  // Deduplicate products to prevent clone products from duplicating
+  // Deduplicate products for hero showcase slots so top drops feature distinct items
   const featuredProducts = deduplicateProducts(products);
 
-  // Split into Section 1 (first 4) and Section 3 (next 4)
+  // Section 1: Featured Drops (top 4 balanced items from active sellers)
   const firstRowProducts = featuredProducts.slice(0, 4);
+
+  // Section 3: Curated Essentials (showcases all sellers' inventory, rounded to full 4-column rows so no gaps exist at bottom)
+  const remainingProducts = products.filter((p) => !firstRowProducts.some((f) => f.id === p.id));
+  const fullRowsCount = Math.floor(remainingProducts.length / 4);
   const secondRowProducts =
-    featuredProducts.length > 4 ? featuredProducts.slice(4, 8) : [];
+    fullRowsCount > 0 ? remainingProducts.slice(0, fullRowsCount * 4) : remainingProducts;
 
   const renderProductGrid = (items: Product[], fallbackOffset: number = 0) => {
     const needed = Math.max(0, 4 - items.length);
@@ -365,7 +369,7 @@ export const HomePage: React.FC = () => {
                 to="/categories/all"
                 className="text-xs font-black tracking-wider text-[#0F172A] hover:text-[#FF6B00] transition-colors uppercase inline-flex items-center gap-1"
               >
-                <span>VIEW ALL ({products.length})</span>
+                <span>VIEW ALL</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>

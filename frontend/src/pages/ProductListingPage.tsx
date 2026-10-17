@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { SlidersHorizontal, X, RotateCcw } from 'lucide-react';
 import { publicApi } from '../api/public.api';
@@ -6,7 +6,8 @@ import type { Category, Product } from '../types';
 import { ProductCard } from '../components/product/ProductCard';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorState } from '../components/common/ErrorState';
-import { formatPrice, deduplicateProducts } from '../utils/formatters';
+
+const PAGE_SIZE = 40;
 
 export const ProductListingPage: React.FC = () => {
   const { slug, collection } = useParams<{ slug?: string; collection?: string }>();
@@ -18,6 +19,10 @@ export const ProductListingPage: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [page, setPage] = useState<number>(1);
+  const [totalCount, setTotalCount] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
   // Filters State
@@ -25,8 +30,12 @@ export const ProductListingPage: React.FC = () => {
     slug && slug !== 'all' ? [slug] : []
   );
   const [maxPrice, setMaxPrice] = useState<number>(200);
+  const [debouncedMaxPrice, setDebouncedMaxPrice] = useState<number>(200);
   const [sortBy, setSortBy] = useState<string>(isNewArrivals ? 'newest' : 'featured');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState<boolean>(false);
+
+  // Sentinel ref for infinite scroll
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Sync category filter when URL slug changes
   useEffect(() => {
@@ -37,28 +46,120 @@ export const ProductListingPage: React.FC = () => {
     }
   }, [slug]);
 
+  // Debounce price slider changes
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
+    const handler = setTimeout(() => {
+      setDebouncedMaxPrice(maxPrice);
+    }, 250);
+    return () => clearTimeout(handler);
+  }, [maxPrice]);
+
+  // Load categories once
+  useEffect(() => {
+    const fetchCats = async () => {
       try {
-        const [catsData, prodsData] = await Promise.all([
-          publicApi.getCategories(),
-          publicApi.getProducts(
-            slug && slug !== 'all' ? slug : undefined,
-            isNewArrivals ? 'new-arrivals' : undefined
-          ),
-        ]);
+        const catsData = await publicApi.getCategories();
         setCategories(catsData);
-        setProducts(prodsData);
       } catch (err: any) {
-        setError(err?.friendlyMessage || 'Failed to load catalog products.');
-      } finally {
-        setLoading(false);
+        console.error('Failed to load categories:', err);
       }
     };
-    fetchData();
-  }, [slug, collection, filterParam, isNewArrivals]);
+    fetchCats();
+  }, []);
+
+  // Fetch initial page when filters change
+  const fetchInitialProducts = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setPage(1);
+    try {
+      const categoryParam =
+        selectedCategories.length > 0
+          ? selectedCategories.join(',')
+          : slug && slug !== 'all'
+          ? slug
+          : undefined;
+
+      const result = await publicApi.getProductsWithPagination({
+        categorySlug: categoryParam,
+        filter: isNewArrivals ? 'new-arrivals' : undefined,
+        limit: PAGE_SIZE,
+        page: 1,
+        sort: sortBy,
+        maxPrice: debouncedMaxPrice < 200 ? debouncedMaxPrice : undefined,
+      });
+
+      setProducts(result.products);
+      setHasMore(result.meta.hasMore);
+      setTotalCount(result.meta.total);
+    } catch (err: any) {
+      setError(err?.friendlyMessage || 'Failed to load catalog products.');
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedCategories, slug, isNewArrivals, sortBy, debouncedMaxPrice]);
+
+  useEffect(() => {
+    fetchInitialProducts();
+  }, [fetchInitialProducts]);
+
+  // Load more products for infinite scroll
+  const loadMoreProducts = useCallback(async () => {
+    if (loading || loadingMore || !hasMore) return;
+
+    setLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const categoryParam =
+        selectedCategories.length > 0
+          ? selectedCategories.join(',')
+          : slug && slug !== 'all'
+          ? slug
+          : undefined;
+
+      const result = await publicApi.getProductsWithPagination({
+        categorySlug: categoryParam,
+        filter: isNewArrivals ? 'new-arrivals' : undefined,
+        limit: PAGE_SIZE,
+        page: nextPage,
+        sort: sortBy,
+        maxPrice: debouncedMaxPrice < 200 ? debouncedMaxPrice : undefined,
+      });
+
+      setProducts((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        const newItems = result.products.filter((p) => !existingIds.has(p.id));
+        return [...prev, ...newItems];
+      });
+
+      setPage(nextPage);
+      setHasMore(result.meta.hasMore);
+      setTotalCount(result.meta.total);
+    } catch (err: any) {
+      console.error('Failed to load more products:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loading, loadingMore, hasMore, page, selectedCategories, slug, isNewArrivals, sortBy, debouncedMaxPrice]);
+
+  // Infinite scroll IntersectionObserver
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (first.isIntersecting && hasMore && !loading && !loadingMore) {
+          loadMoreProducts();
+        }
+      },
+      { rootMargin: '400px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMoreProducts, hasMore, loading, loadingMore]);
 
   const handleCategoryToggle = (categorySlug: string) => {
     setSelectedCategories((prev) =>
@@ -74,52 +175,15 @@ export const ProductListingPage: React.FC = () => {
     setSortBy(isNewArrivals ? 'newest' : 'featured');
   };
 
-  // Filtered & Sorted products
-  const filteredProducts = useMemo(() => {
-    const deduped = deduplicateProducts(products);
-
-    return deduped
-      .filter((product) => {
-        // Enforce 24-hour window strictly for new-arrivals
-        if (isNewArrivals) {
-          if (product.createdAt) {
-            const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-            if (new Date(product.createdAt) < twentyFourHoursAgo) {
-              return false;
-            }
-          }
-        }
-
-        // Category filter
-        if (selectedCategories.length > 0) {
-          if (!product.category || !selectedCategories.includes(product.category.slug)) {
-            return false;
-          }
-        }
-
-        // Price filter
-        const priceNum = parseFloat(formatPrice(product.price));
-        if (priceNum > maxPrice) {
-          return false;
-        }
-
-        return true;
-      })
-      .sort((a, b) => {
-        const priceA = parseFloat(formatPrice(a.price));
-        const priceB = parseFloat(formatPrice(b.price));
-
-        if (sortBy === 'price-low') return priceA - priceB;
-        if (sortBy === 'price-high') return priceB - priceA;
-        if (sortBy === 'title-asc') return a.title.localeCompare(b.title);
-        if (sortBy === 'newest') {
-          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return dateB - dateA;
-        }
-        return 0; // featured default
-      });
-  }, [products, selectedCategories, maxPrice, sortBy, isNewArrivals]);
+  // Deduplicate exclusively by product ID (preserves all distinct seller inventory items)
+  const displayProducts = useMemo(() => {
+    const seenIds = new Set<string>();
+    return products.filter((p) => {
+      if (seenIds.has(p.id)) return false;
+      seenIds.add(p.id);
+      return true;
+    });
+  }, [products]);
 
   const activeCategoryName = useMemo(() => {
     if (isNewArrivals) {
@@ -159,9 +223,6 @@ export const ProductListingPage: React.FC = () => {
               </span>
             )}
           </div>
-          <span className="text-xs font-semibold text-slate-400">
-            Showing {filteredProducts.length} items
-          </span>
         </div>
       </div>
 
@@ -189,9 +250,10 @@ export const ProductListingPage: React.FC = () => {
           </select>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
+        {/* Desktop Layout: Fixed Sidebar + Full Product Area */}
+        <div className="flex flex-col lg:flex-row gap-8 items-start">
           {/* Left Sidebar Filters */}
-          <aside className="hidden lg:block col-span-1 bg-white border border-slate-200 rounded-sm p-6 sticky top-28 space-y-6">
+          <aside className="hidden lg:block w-60 xl:w-64 shrink-0 bg-white border border-slate-200 rounded-sm p-6 sticky top-28 space-y-6">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <h3 className="text-sm font-bold text-slate-900 tracking-wider uppercase">
                 FILTERS
@@ -265,7 +327,7 @@ export const ProductListingPage: React.FC = () => {
           </aside>
 
           {/* Right Product Area */}
-          <main className="col-span-1 lg:col-span-3">
+          <main className="flex-1 min-w-0">
             {/* Desktop Top Bar */}
             <div className="hidden lg:flex items-center justify-between pb-4 mb-6 border-b border-slate-200">
               <div>
@@ -275,7 +337,9 @@ export const ProductListingPage: React.FC = () => {
                 <p className="text-xs text-slate-500 mt-0.5">
                   {isNewArrivals
                     ? 'Curated releases and verified inventory added in the past 24 hours.'
-                    : `Showing ${filteredProducts.length} authentic verified marketplace items.`}
+                    : totalCount > 0
+                    ? `Showcasing inventory across verified marketplace sellers (${totalCount} products)`
+                    : 'Showcasing authentic catalog & multi-seller collections.'}
                 </p>
               </div>
 
@@ -286,7 +350,7 @@ export const ProductListingPage: React.FC = () => {
                   onChange={(e) => setSortBy(e.target.value)}
                   className="px-3 py-2 rounded-sm border border-slate-300 text-xs font-bold text-[#0F172A] bg-white focus:outline-none focus:border-[#0F172A] cursor-pointer"
                 >
-                  <option value="featured">Featured Collection</option>
+                  <option value="featured">Featured Collection (Balanced)</option>
                   <option value="newest">Newest First</option>
                   <option value="price-low">Price: Low to High</option>
                   <option value="price-high">Price: High to Low</option>
@@ -297,10 +361,10 @@ export const ProductListingPage: React.FC = () => {
 
             {/* Loading & Error States */}
             {loading && <LoadingSpinner size="lg" message="Loading catalog items..." />}
-            {error && <ErrorState message={error} onRetry={() => window.location.reload()} />}
+            {error && <ErrorState message={error} onRetry={fetchInitialProducts} />}
 
             {/* Empty State */}
-            {!loading && !error && filteredProducts.length === 0 && (
+            {!loading && !error && displayProducts.length === 0 && (
               <div className="border border-slate-200 rounded-sm p-16 text-center bg-white">
                 <h4 className="text-base font-bold text-slate-900 tracking-tight">
                   {isNewArrivals
@@ -332,13 +396,49 @@ export const ProductListingPage: React.FC = () => {
               </div>
             )}
 
-            {/* Responsive Product Grid */}
-            {!loading && !error && filteredProducts.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
-                {filteredProducts.map((product) => (
-                  <ProductCard key={product.id} product={product} />
-                ))}
-              </div>
+            {/* Responsive Product Grid: Standard 4 columns on desktop, 3 on tablet, 2 on mobile */}
+            {!loading && !error && displayProducts.length > 0 && (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                  {displayProducts.map((product) => (
+                    <ProductCard key={product.id} product={product} />
+                  ))}
+                </div>
+
+                {/* Infinite Scroll Sentinel */}
+                <div ref={sentinelRef} className="h-10 w-full pointer-events-none" />
+
+                {/* Subsequent Batch Loading Micro-Indicator */}
+                {loadingMore && (
+                  <div className="py-8 flex justify-center items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-[#0F172A] border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                      Loading more products...
+                    </span>
+                  </div>
+                )}
+
+                {/* Explicit Interactive Load More Option */}
+                {hasMore && !loadingMore && (
+                  <div className="mt-8 text-center">
+                    <button
+                      onClick={loadMoreProducts}
+                      className="px-8 py-3 bg-white hover:bg-slate-50 border border-slate-300 rounded-sm text-xs font-bold text-[#0F172A] uppercase tracking-wider transition-colors shadow-xs cursor-pointer"
+                    >
+                      Load More Products ({displayProducts.length} of {totalCount})
+                    </button>
+                  </div>
+                )}
+
+                {/* Catalog Fully Loaded Footer Indicator */}
+                {!hasMore && displayProducts.length > 0 && (
+                  <div className="mt-12 py-6 text-center border-t border-slate-200">
+                    <p className="text-xs font-medium text-slate-500">
+                      Showing all {displayProducts.length} products from verified active sellers across the marketplace.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
           </main>
         </div>

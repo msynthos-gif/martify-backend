@@ -279,5 +279,6 @@ export interface ApiResponse<T> {
     page?: number;
     limit?: number;
     totalPages?: number;
+    hasMore?: boolean;
   };
 }

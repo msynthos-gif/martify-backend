@@ -26,12 +26,72 @@ export const publicApi = {
   },
 
   // Products
-  async getProducts(categorySlug?: string, filter?: string): Promise<Product[]> {
+  async getProducts(
+    categorySlug?: string,
+    filter?: string,
+    limit?: number,
+    page?: number,
+    sort?: string,
+    maxPrice?: number
+  ): Promise<Product[]> {
     const params: Record<string, string> = {};
     if (categorySlug && categorySlug !== 'all') params.category = categorySlug;
     if (filter) params.filter = filter;
+    if (limit) params.limit = String(limit);
+    if (page) params.page = String(page);
+    if (sort) params.sort = sort;
+    if (maxPrice !== undefined) params.maxPrice = String(maxPrice);
     const res = await apiClient.get<ApiResponse<Product[]>>('/products', { params });
     return res.data.data;
+  },
+
+  async getProductsWithPagination(options: {
+    categorySlug?: string;
+    filter?: string;
+    limit?: number;
+    page?: number;
+    sort?: string;
+    maxPrice?: number;
+  }): Promise<{
+    products: Product[];
+    meta: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+      hasMore: boolean;
+    };
+  }> {
+    const params: Record<string, string> = {};
+    if (options.categorySlug && options.categorySlug !== 'all') params.category = options.categorySlug;
+    if (options.filter) params.filter = options.filter;
+    if (options.limit) params.limit = String(options.limit);
+    if (options.page) params.page = String(options.page);
+    if (options.sort) params.sort = options.sort;
+    if (options.maxPrice !== undefined) params.maxPrice = String(options.maxPrice);
+
+    const res = await apiClient.get<ApiResponse<Product[]>>('/products', { params });
+    const products = Array.isArray(res.data.data) ? res.data.data : [];
+    const limit = options.limit || 40;
+    const page = options.page || 1;
+    const meta = res.data.meta || {
+      total: products.length,
+      page,
+      limit,
+      totalPages: Math.ceil(products.length / limit) || 1,
+      hasMore: products.length === limit,
+    };
+
+    return {
+      products,
+      meta: {
+        total: meta.total ?? products.length,
+        page: meta.page ?? page,
+        limit: meta.limit ?? limit,
+        totalPages: meta.totalPages ?? (Math.ceil((meta.total ?? products.length) / limit) || 1),
+        hasMore: meta.hasMore ?? (products.length === limit),
+      },
+    };
   },
 
   async getNewArrivals(): Promise<Product[]> {

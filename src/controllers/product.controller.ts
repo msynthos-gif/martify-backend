@@ -126,11 +126,26 @@ export class ProductController {
     try {
       const categorySlug = req.query.category as string | undefined;
       const filter = req.query.filter as string | undefined;
-      const products = await productService.getPublicProducts(categorySlug, filter);
+      const sort = req.query.sort as string | undefined;
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice as string) : undefined;
+      const seed = req.query.seed as string | undefined;
+
+      const result = await productService.getPublicProducts({
+        categorySlug,
+        filter,
+        sort,
+        page,
+        limit,
+        maxPrice,
+        seed,
+      });
 
       res.status(200).json({
         success: true,
-        data: products,
+        data: result.products,
+        meta: result.meta,
       });
     } catch (error) {
       next(error);

@@ -108,9 +108,10 @@ export const Footer: React.FC = () => {
 
         <div className="mt-12 pt-8 border-t border-slate-800 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© {new Date().getFullYear()} Martify Collection Marketplace Inc. All rights reserved.</p>
-          <p className="text-[11px] text-slate-400">
-
-          </p>
+          <div className="flex items-center gap-6 text-slate-400">
+            <Link to="/about" className="hover:text-white transition-colors">About Us</Link>
+            <Link to="/contact" className="hover:text-white transition-colors">Contact Us</Link>
+          </div>
         </div>
       </div>
     </footer>

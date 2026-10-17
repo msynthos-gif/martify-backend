@@ -1,0 +1,21 @@
+User-agent: *
+Allow: /
+
+# Protected & Administrative Dashboards
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin/*
+Disallow: /seller/dashboard
+Disallow: /seller/dashboard/
+Disallow: /seller/dashboard/*
+Disallow: /support
+Disallow: /support/
+Disallow: /support/*
+
+# Dynamic Session & Checkout Funnel
+Disallow: /cart
+Disallow: /checkout
+Disallow: /api/
+
+# Sitemap
+Sitemap: https://martifycollection.com/sitemap.xml

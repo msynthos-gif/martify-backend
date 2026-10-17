@@ -33,6 +33,8 @@ import { SupportLoginPage } from './pages/SupportLoginPage';
 import { SupportDashboardPage } from './pages/SupportDashboardPage';
 import { SellerStorefrontPage } from './pages/SellerStorefrontPage';
 import { SearchPage } from './pages/SearchPage';
+import { AboutPage } from './pages/AboutPage';
+import { ContactPage } from './pages/ContactPage';
 
 export const App: React.FC = () => {
   return (
@@ -54,6 +56,11 @@ export const App: React.FC = () => {
                 <Route path="/categories/:slug" element={<ProductListingPage />} />
                 <Route path="/collections/:collection" element={<ProductListingPage />} />
                 <Route path="/products" element={<ProductListingPage />} />
+                <Route path="/shop" element={<ProductListingPage />} />
+
+                {/* Company & Support Information */}
+                <Route path="/about" element={<AboutPage />} />
+                <Route path="/contact" element={<ContactPage />} />
 
                 {/* 3. Product Detail Page */}
                 <Route path="/products/:id" element={<ProductDetailPage />} />

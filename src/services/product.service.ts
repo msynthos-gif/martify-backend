@@ -475,34 +475,199 @@ export class ProductService {
     return products.map((p) => this.attachTotalSold(p));
   }
 
-  async getPublicProducts(categorySlug?: string, filter?: string) {
+  async getPublicProducts(
+    optionsOrCategorySlug?: string | {
+      categorySlug?: string;
+      filter?: string;
+      limit?: number;
+      page?: number;
+      sort?: string;
+      maxPrice?: number;
+      seed?: string;
+    },
+    filterParam?: string,
+    limitParam?: number
+  ) {
+    let categorySlug: string | undefined;
+    let filter: string | undefined;
+    let limit: number | undefined;
+    let page: number | undefined;
+    let sort: string | undefined;
+    let maxPrice: number | undefined;
+
+    if (typeof optionsOrCategorySlug === 'object' && optionsOrCategorySlug !== null) {
+      categorySlug = optionsOrCategorySlug.categorySlug;
+      filter = optionsOrCategorySlug.filter;
+      limit = optionsOrCategorySlug.limit;
+      page = optionsOrCategorySlug.page;
+      sort = optionsOrCategorySlug.sort;
+      maxPrice = optionsOrCategorySlug.maxPrice;
+    } else {
+      categorySlug = optionsOrCategorySlug;
+      filter = filterParam;
+      limit = limitParam;
+    }
+
+    const currentPage = page && page > 0 ? page : 1;
+
     const whereClause: Prisma.ProductWhereInput = {
       isActive: true,
-      ...(categorySlug && categorySlug !== 'all' ? { category: { slug: categorySlug } } : {}),
     };
+
+    if (categorySlug && categorySlug !== 'all') {
+      const slugs = categorySlug.split(',').map((s) => s.trim()).filter(Boolean);
+      if (slugs.length === 1) {
+        whereClause.category = { slug: slugs[0] };
+      } else if (slugs.length > 1) {
+        whereClause.category = { slug: { in: slugs } };
+      }
+    }
+
+    if (maxPrice !== undefined && !isNaN(maxPrice) && maxPrice > 0) {
+      whereClause.price = { lte: new Prisma.Decimal(maxPrice) };
+    }
 
     if (filter === 'new-arrivals') {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      whereClause.createdAt = {
-        gte: twentyFourHoursAgo,
-      };
+      const countLast24h = await prisma.product.count({
+        where: {
+          ...whereClause,
+          createdAt: { gte: twentyFourHoursAgo },
+        },
+      });
+
+      if (countLast24h > 0) {
+        whereClause.createdAt = { gte: twentyFourHoursAgo };
+      } else {
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const countLast7d = await prisma.product.count({
+          where: {
+            ...whereClause,
+            createdAt: { gte: sevenDaysAgo },
+          },
+        });
+        if (countLast7d > 0) {
+          whereClause.createdAt = { gte: sevenDaysAgo };
+        }
+      }
     }
 
-    const products = await prisma.product.findMany({
-      where: whereClause,
-      include: {
-        category: { select: { id: true, name: true, slug: true } },
-        seller: { select: { id: true, name: true } },
-        images: {
-          orderBy: { sortOrder: 'asc' },
-          select: { id: true, url: true, sortOrder: true },
+    const includeQuery = {
+      category: { select: { id: true, name: true, slug: true } },
+      seller: {
+        select: {
+          id: true,
+          name: true,
+          storeName: true,
+          storeImageUrl: true,
+          isDemoAccount: true,
         },
-        _count: { select: { orders: true } },
       },
+      images: {
+        orderBy: { sortOrder: 'asc' as const },
+        select: { id: true, url: true, sortOrder: true },
+      },
+      _count: { select: { orders: true } },
+    };
+
+    // If explicit sorting is specified and is NOT default/featured/newest, use direct SQL/Prisma order
+    if (sort === 'price-low' || sort === 'price-high' || sort === 'title-asc' || filter === 'new-arrivals') {
+      let orderByClause: Prisma.ProductOrderByWithRelationInput | Prisma.ProductOrderByWithRelationInput[] = { createdAt: 'desc' };
+      if (sort === 'price-low') {
+        orderByClause = [{ price: 'asc' }, { createdAt: 'desc' }];
+      } else if (sort === 'price-high') {
+        orderByClause = [{ price: 'desc' }, { createdAt: 'desc' }];
+      } else if (sort === 'title-asc') {
+        orderByClause = [{ title: 'asc' }, { createdAt: 'desc' }];
+      }
+
+      const total = await prisma.product.count({ where: whereClause });
+      const pageSize = limit && limit > 0 ? limit : total > 0 ? total : 40;
+
+      const rawProducts = await prisma.product.findMany({
+        where: whereClause,
+        include: includeQuery,
+        orderBy: orderByClause,
+        skip: (currentPage - 1) * pageSize,
+        take: pageSize,
+      });
+
+      const products = rawProducts.map((p) => this.attachTotalSold(p));
+      const meta = {
+        total,
+        page: currentPage,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize) || 1,
+        hasMore: (currentPage - 1) * pageSize + products.length < total,
+      };
+
+      return Object.assign([...products], {
+        products,
+        meta,
+      });
+    }
+
+    // Default Catalog Browsing: Multi-Seller Balanced Interleaved Display
+    const allProducts = await prisma.product.findMany({
+      where: whereClause,
+      include: includeQuery,
       orderBy: { createdAt: 'desc' },
     });
 
-    return products.map((p) => this.attachTotalSold(p));
+    const productsWithSold = allProducts.map((p) => this.attachTotalSold(p));
+
+    // Group products by sellerId
+    const sellerBuckets = new Map<string, typeof productsWithSold>();
+    for (const prod of productsWithSold) {
+      const sId = prod.sellerId;
+      if (!sellerBuckets.has(sId)) {
+        sellerBuckets.set(sId, []);
+      }
+      sellerBuckets.get(sId)!.push(prod);
+    }
+
+    // Order sellers by recency of their newest product
+    const sortedSellerIds = Array.from(sellerBuckets.keys()).sort((a, b) => {
+      const bucketA = sellerBuckets.get(a)!;
+      const bucketB = sellerBuckets.get(b)!;
+      const timeA = bucketA[0]?.createdAt ? new Date(bucketA[0].createdAt).getTime() : 0;
+      const timeB = bucketB[0]?.createdAt ? new Date(bucketB[0].createdAt).getTime() : 0;
+      return timeB - timeA;
+    });
+
+    // Round-robin interleave across sellers
+    const interleaved: typeof productsWithSold = [];
+    let maxBucketLen = 0;
+    for (const bucket of sellerBuckets.values()) {
+      if (bucket.length > maxBucketLen) maxBucketLen = bucket.length;
+    }
+
+    for (let round = 0; round < maxBucketLen; round++) {
+      for (const sellerId of sortedSellerIds) {
+        const bucket = sellerBuckets.get(sellerId)!;
+        if (round < bucket.length) {
+          interleaved.push(bucket[round]);
+        }
+      }
+    }
+
+    const total = interleaved.length;
+    const pageSize = limit && limit > 0 ? limit : total > 0 ? total : 40;
+    const startIndex = (currentPage - 1) * pageSize;
+    const paginatedProducts = interleaved.slice(startIndex, startIndex + pageSize);
+
+    const meta = {
+      total,
+      page: currentPage,
+      limit: pageSize,
+      totalPages: Math.ceil(total / pageSize) || 1,
+      hasMore: startIndex + paginatedProducts.length < total,
+    };
+
+    return Object.assign([...paginatedProducts], {
+      products: paginatedProducts,
+      meta,
+    });
   }
 
   async getPublicProductById(id: string) {
@@ -510,7 +675,15 @@ export class ProductService {
       where: { id, isActive: true },
       include: {
         category: { select: { id: true, name: true, slug: true } },
-        seller: { select: { id: true, name: true } },
+        seller: {
+          select: {
+            id: true,
+            name: true,
+            storeName: true,
+            storeImageUrl: true,
+            isDemoAccount: true,
+          },
+        },
         images: {
           orderBy: { sortOrder: 'asc' },
           select: { id: true, url: true, sortOrder: true },

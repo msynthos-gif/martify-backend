@@ -80,6 +80,10 @@ export const getProductsQuerySchema = z.object({
     category: z.string().optional(),
     filter: z.string().optional(),
     sort: z.string().optional(),
+    limit: z.string().optional(),
+    page: z.string().optional(),
+    maxPrice: z.string().optional(),
+    seed: z.string().optional(),
   }),
 });
 
